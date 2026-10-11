@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+queuecare.db
+model/wait_model.pkl
+model/data.csv
+model/metrics.json
+model/test_results.csv
+.streamlit/secrets.toml
