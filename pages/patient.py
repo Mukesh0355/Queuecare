@@ -55,6 +55,11 @@ def _slot_wait_minutes(doctor, slot, delay, treat_as_emergency: bool) -> tuple:
     return ahead, base, base + extra
 
 
+def _clear_slot_selection(other_key: str):
+    if other_key in st.session_state:
+        st.session_state[other_key] = None
+
+
 def render_patient():
     tab_wait, tab_book, tab_mine = st.tabs(
         [t("tab_wait"), t("tab_book"), t("tab_mine")]
@@ -142,8 +147,12 @@ def _render_book_tab(doctors):
     doctor = doctors[doctor_index]
 
     name = st.text_input(t("name_label"), key="book_name")
-    age_text = st.text_input(
+    age_text = st.number_input(
         t("age_label"),
+        min_value=0,
+        max_value=120,
+        step=1,
+        value=None,
         key="book_age",
         placeholder=t("age_placeholder"),
     )
@@ -154,10 +163,6 @@ def _render_book_tab(doctors):
     )
 
     flags = triage(symptoms)
-    if flags["level"] == "emergency":
-        st.error(t("emergency_alert"))
-    elif flags["level"] == "urgent":
-        st.warning(t("urgent_alert", kw=flags["matched"]))
 
     today = datetime.now()
     slots = generate_slots(today.date())
@@ -182,7 +187,6 @@ def _render_book_tab(doctors):
     least_slots = {r["slot"] for r in rows if r["wait"] == least_wait}
 
     st.markdown(t("available_slots"))
-    options = []
     lookup = {}
     for r in rows:
         tag = t("least_crowded") if r["slot"] in least_slots else ""
@@ -193,28 +197,72 @@ def _render_book_tab(doctors):
             min_unit=t("min_unit"),
             tag=tag,
         )
-        options.append(label)
         lookup[label] = r
 
-    chosen = st.selectbox(t("pick_time"), options, key="book_slot")
-    chosen_row = lookup[chosen]
-    naive = chosen_row["ahead"] * doctor["avg_consult_min"]
-    st.caption(
-        t(
-            "slot_wait_formula",
-            n=chosen_row["ahead"],
-            avg=doctor["avg_consult_min"],
-            naive=naive,
-            wait=chosen_row["wait"],
-            min_unit=t("min_unit"),
-        )
+    morning_options = [
+        label for label, row in lookup.items() if int(row["display"][:2]) < 12
+    ]
+    afternoon_options = [
+        label for label, row in lookup.items() if int(row["display"][:2]) >= 12
+    ]
+    morning_default = (
+        morning_options[0]
+        if "book_slot" not in st.session_state and morning_options
+        else None
     )
+    afternoon_default = (
+        afternoon_options[0]
+        if "book_slot_afternoon" not in st.session_state
+        and afternoon_options
+        and not morning_options
+        else None
+    )
+    morning_choice = st.pills(
+        t("morning_slots"),
+        morning_options,
+        selection_mode="single",
+        default=morning_default,
+        key="book_slot",
+        on_change=_clear_slot_selection,
+        args=("book_slot_afternoon",),
+    )
+    afternoon_choice = st.pills(
+        t("afternoon_slots"),
+        afternoon_options,
+        selection_mode="single",
+        default=afternoon_default,
+        key="book_slot_afternoon",
+        on_change=_clear_slot_selection,
+        args=("book_slot",),
+    )
+    chosen = afternoon_choice or morning_choice
+    chosen_row = lookup[chosen] if chosen else None
+    if chosen_row:
+        naive = chosen_row["ahead"] * doctor["avg_consult_min"]
+        st.caption(
+            t(
+                "slot_wait_formula",
+                n=chosen_row["ahead"],
+                avg=doctor["avg_consult_min"],
+                naive=naive,
+                wait=chosen_row["wait"],
+                min_unit=t("min_unit"),
+            )
+        )
+
+    if flags["level"] == "emergency":
+        st.error(t("emergency_alert"))
+    elif flags["level"] == "urgent":
+        st.error(t("urgent_alert", kw=flags["matched"]))
 
     if st.button(t("book_button"), type="primary", key="book_submit"):
+        if chosen_row is None:
+            st.error(t("booking_slot_required"))
+            return
         if not (name or "").strip():
             st.error(t("enter_name"))
             return
-        if not (age_text or "").strip():
+        if age_text is None:
             st.error(t("enter_age"))
             return
         if not (symptoms or "").strip():
@@ -251,17 +299,28 @@ def _render_book_tab(doctors):
 
         st.session_state["tracked_appointment_id"] = str(appointment_id)
         result = triage(symptoms)
+        st.session_state["booking_confirmation"] = {
+            "id": appointment_id,
+            "doctor": doctor["name"],
+            "time": chosen_row["display"],
+            "wait": chosen_row["wait"],
+            "level": result["level"],
+        }
+
+    confirmation = st.session_state.get("booking_confirmation")
+    if confirmation:
         st.success(
             t(
                 "booking_confirmation",
-                id=appointment_id,
-                doctor=doctor["name"],
-                time=chosen_row["display"],
-                wait=chosen_row["wait"],
+                id=confirmation["id"],
+                doctor=confirmation["doctor"],
+                time=confirmation["time"],
+                wait=confirmation["wait"],
                 min_unit=t("min_unit"),
             )
         )
-        if result["level"] == "emergency":
+        st.code(str(confirmation["id"]), language=None)
+        if confirmation["level"] == "emergency":
             st.error(t("emergency_alert"))
 
     st.caption(t("disclaimer"))
@@ -303,11 +362,34 @@ def _render_my_appointment_tab():
         st.success(t("appointment_seen"))
         return
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric(t("metric_position"), status["position"] or "—")
-    c2.metric(t("metric_base_wait"), f"{status['base_wait']} {t('min_unit')}")
-    c3.metric(t("metric_emergency_delay"), f"{status['delay']} {t('min_unit')}")
-    c4.metric(t("metric_total_wait"), f"{status['total_wait']} {t('min_unit')}")
+    total_wait = status["total_wait"]
+    if total_wait < 20:
+        wait_colors = ("#14532d", "#dcfce7", "#166534")
+    elif total_wait <= 45:
+        wait_colors = ("#713f12", "#fef3c7", "#a16207")
+    else:
+        wait_colors = ("#7f1d1d", "#fee2e2", "#b91c1c")
+    st.markdown(
+        f"""
+        <div class="queuecare-total-wait" style="
+            --wait-text: {wait_colors[0]};
+            --wait-background: {wait_colors[1]};
+            --wait-border: {wait_colors[2]};
+        ">
+            <span class="queuecare-total-wait-label">{t("metric_total_wait")}</span>
+            <span class="queuecare-total-wait-value">{total_wait} {t("min_unit")}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    with st.container(key="appointment_metrics"):
+        c1, c2 = st.columns(2)
+        c1.metric(t("metric_position"), status["position"] or "—")
+        c2.metric(t("metric_base_wait"), f"{status['base_wait']} {t('min_unit')}")
+        c3, c4 = st.columns(2)
+        c3.metric(t("metric_emergency_delay"), f"{status['delay']} {t('min_unit')}")
+        c4.metric(t("metric_total_wait"), f"{total_wait} {t('min_unit')}")
 
     triage_key = {
         "emergency": "triage_emergency",
@@ -334,5 +416,8 @@ def _render_my_appointment_tab():
 
     if st.button(t("cancel_button"), key="cancel_appt"):
         cancel_booking(raw_id)
+        confirmation = st.session_state.get("booking_confirmation")
+        if confirmation and str(confirmation["id"]) == raw_id:
+            del st.session_state["booking_confirmation"]
         st.success(t("appointment_cancelled_success"))
         st.rerun()
