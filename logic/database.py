@@ -402,16 +402,20 @@ def cancel_booking(appointment_id):
         conn.close()
 
 
-def complete_visit(appointment_id):
-    """Mark an appointment as seen (doctor finished the consult)."""
+def complete_visit(appointment_id, doctor_id) -> bool:
+    """Mark a doctor's appointment as seen, if it belongs to that doctor."""
     init_db()
     conn = get_connection()
     try:
-        conn.execute(
-            "UPDATE appointments SET status = 'seen' WHERE id = ?",
-            (int(appointment_id),),
+        cursor = conn.execute(
+            """
+            UPDATE appointments SET status = 'seen'
+            WHERE id = ? AND doctor_id = ? AND status = 'waiting'
+            """,
+            (int(appointment_id), int(doctor_id)),
         )
         conn.commit()
+        return cursor.rowcount == 1
     finally:
         conn.close()
 

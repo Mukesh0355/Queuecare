@@ -34,13 +34,17 @@ Slots every 15 minutes, 9:00 to 17:00.
 
 Each waiting emergency adds `round(1.5 × avg consult)` minutes to other patients for that doctor (15 min extra on Doctor 1).
 
+## Doctor login
+
+Only the Doctor view requires a PIN; patients can check waits and book appointments without an account. For local use, copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` and replace the example values with private PINs. The real `secrets.toml` is ignored by Git. If no doctor PIN secrets are configured, the app uses demo PINs: Doctor 1 `1111`, Doctor 2 `2222`, and Doctor 3 `3333`.
+
 ## How to test the emergency flow
 
 a) Open **Patient → Book Appointment**. Book two routine patients for **Doctor 1** (for example “mild cough” and “routine checkup”). Note each appointment ID and the wait shown on **My Appointment**.
 
 b) Book a third patient for the same doctor with symptoms **chest pain**. Save that ID too.
 
-c) Switch the sidebar to **Doctor**, signed in as **Dr. Mehta**. You should see a red emergency banner with name, age, symptoms, matched keyword `chest pain`, and how many extra minutes this adds to other waits. The emergency is first in the colour-coded queue.
+c) Switch the sidebar to **Doctor**, select **Dr. Mehta**, and log in with PIN `1111` when using the demo PINs. You should see a red emergency banner with name, age, symptoms, matched keyword `chest pain`, and how many extra minutes this adds to other waits. The emergency is first in the colour-coded queue.
 
 d) Go back to **Patient → My Appointment**, enter a **routine** appointment ID. Position, base wait, emergency delay, and total wait appear. You should see: *An emergency case was prioritized. Your wait increased by D min.*
 

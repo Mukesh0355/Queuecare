@@ -36,6 +36,6 @@ assert len(ids) == 5
 q2 = get_queue(2)
 assert q2[0]["triage_level"] == "emergency"
 assert q2[0]["matched_keyword"] == "chest pain"
-complete_visit(q2[0]["appointment_id"])
+complete_visit(q2[0]["appointment_id"], q2[0]["doctor_id"])
 assert get_queue(2) == []
 print("SMOKE OK wait=", w)
