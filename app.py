@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
 import streamlit as st
 
 from logic.database import init_db, load_demo_data, reset_database
+from logic.i18n import LANGUAGES
 from model.predict import reset_model_cache
 from pages.doctor import render_doctor
 from pages.patient import render_patient
@@ -39,6 +40,10 @@ def ensure_ready():
         reset_model_cache()
 
 
+def _save_language():
+    st.session_state["lang"] = LANGUAGES[st.session_state["lang_label"]]
+
+
 st.set_page_config(page_title="QueueCare", page_icon="🏥", layout="wide")
 ensure_ready()
 
@@ -46,6 +51,19 @@ st.title("QueueCare")
 st.markdown("**Know your wait, skip the crowd, and never delay an emergency.**")
 
 with st.sidebar:
+    if "lang_label" not in st.session_state:
+        label_for_language = {
+            language: label for label, language in LANGUAGES.items()
+        }.get(st.session_state.get("lang", "en"), "English")
+        st.session_state["lang_label"] = label_for_language
+    if "lang" not in st.session_state:
+        st.session_state["lang"] = LANGUAGES[st.session_state["lang_label"]]
+    st.selectbox(
+        "Language / भाषा / மொழி",
+        list(LANGUAGES),
+        key="lang_label",
+        on_change=_save_language,
+    )
     st.header("QueueCare")
     view = st.radio(
         "Go to",

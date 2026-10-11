@@ -16,24 +16,33 @@ from logic.database import (
     get_taken_slots,
     patients_ahead,
 )
+from logic.i18n import t
 from logic.triage import triage
 from model.predict import predict_wait
 
-DISCLAIMER = (
-    "This is triage support, not a diagnosis. In a real emergency, call an ambulance."
-)
-
 
 def _doctor_label(doc: dict) -> str:
-    return f"{doc['id']} – {doc['name']} ({doc['specialty']}, ~{doc['avg_consult_min']} min)"
+    specialties = {
+        "General Physician": "specialty_general",
+        "Cardiologist": "specialty_cardiologist",
+        "Pediatrician": "specialty_pediatrician",
+    }
+    return t(
+        "doctor_label",
+        id=doc["id"],
+        name=doc["name"],
+        specialty=t(specialties.get(doc["specialty"], "doctor_field")),
+        avg=doc["avg_consult_min"],
+        min_unit=t("min_unit"),
+    )
 
 
 def _busy_label(n_waiting: int) -> str:
     if n_waiting <= 1:
-        return "Quiet"
+        return t("busy_quiet")
     if n_waiting <= 4:
-        return "Moderate"
-    return "Busy"
+        return t("busy_moderate")
+    return t("busy_busy")
 
 
 def _slot_wait_minutes(doctor, slot, delay, treat_as_emergency: bool) -> tuple:
@@ -48,12 +57,12 @@ def _slot_wait_minutes(doctor, slot, delay, treat_as_emergency: bool) -> tuple:
 
 def render_patient():
     tab_wait, tab_book, tab_mine = st.tabs(
-        ["Check Wait Times", "Book Appointment", "My Appointment"]
+        [t("tab_wait"), t("tab_book"), t("tab_mine")]
     )
 
     doctors = get_doctors()
     if not doctors:
-        st.warning("No doctors found. Restart the app so the database can be created.")
+        st.warning(t("no_doctors"))
         return
 
     with tab_wait:
@@ -65,12 +74,16 @@ def render_patient():
 
 
 def _render_wait_tab(doctors):
-    st.subheader("Check wait times")
-    st.caption("No booking needed. Pick a doctor to see how busy they are right now.")
+    st.subheader(t("wait_heading"))
+    st.caption(t("wait_caption"))
 
-    labels = [_doctor_label(d) for d in doctors]
-    selected = st.selectbox("Doctor", labels, key="wait_doctor")
-    doctor = doctors[labels.index(selected)]
+    doctor_index = st.selectbox(
+        t("doctor_field"),
+        range(len(doctors)),
+        format_func=lambda index: _doctor_label(doctors[index]),
+        key="wait_doctor",
+    )
+    doctor = doctors[doctor_index]
 
     queue = get_queue(doctor["id"])
     n_waiting = len(queue)
@@ -82,58 +95,80 @@ def _render_wait_tab(doctors):
     crowd = _busy_label(n_waiting)
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("People waiting now", n_waiting)
-    c2.metric("Estimated wait", f"{total} min")
-    c3.metric("Clinic feel", crowd)
+    c1.metric(t("metric_waiting"), n_waiting)
+    c2.metric(t("metric_estimated_wait"), f"{total} {t('min_unit')}")
+    c3.metric(t("metric_clinic_feel"), crowd)
 
     st.info(
-        f"{n_waiting} patients ahead x {doctor['avg_consult_min']} min average "
-        f"= about {naive} min"
+        t(
+            "wait_formula",
+            n=n_waiting,
+            avg=doctor["avg_consult_min"],
+            naive=naive,
+            min_unit=t("min_unit"),
+        )
     )
-    st.caption(f"Model estimate: {base} min" + (f" + {delay} min emergency delay" if delay else ""))
+    st.caption(
+        t(
+            "model_estimate_delay",
+            base=base,
+            delay=delay,
+            min_unit=t("min_unit"),
+        )
+        if delay
+        else t("model_estimate", base=base, min_unit=t("min_unit"))
+    )
 
     if delay > 0:
         st.warning(
-            f"An emergency case is currently being treated. "
-            f"Waits are about {delay} minutes longer than usual."
+            t(
+                "emergency_wait_warning",
+                delay=delay,
+                min_unit=t("min_unit"),
+            )
         )
 
 
 def _render_book_tab(doctors):
-    st.subheader("Book an appointment")
-    st.caption("Choose a doctor, describe symptoms, and pick a 15-minute slot.")
+    st.subheader(t("book_heading"))
+    st.caption(t("book_caption"))
 
-    labels = [_doctor_label(d) for d in doctors]
-    selected = st.selectbox("Doctor", labels, key="book_doctor")
-    doctor = doctors[labels.index(selected)]
+    doctor_index = st.selectbox(
+        t("doctor_field"),
+        range(len(doctors)),
+        format_func=lambda index: _doctor_label(doctors[index]),
+        key="book_doctor",
+    )
+    doctor = doctors[doctor_index]
 
-    name = st.text_input("Your name", key="book_name")
-    age_text = st.text_input("Age", key="book_age", placeholder="e.g. 34")
+    name = st.text_input(t("name_label"), key="book_name")
+    age_text = st.text_input(
+        t("age_label"),
+        key="book_age",
+        placeholder=t("age_placeholder"),
+    )
     symptoms = st.text_area(
-        "Symptoms (plain language is fine)",
+        t("symptoms_label"),
         key="book_symptoms",
-        placeholder="e.g. mild headache, high fever, chest pain…",
+        placeholder=t("symptoms_placeholder"),
     )
 
     flags = triage(symptoms)
     if flags["level"] == "emergency":
-        st.error(
-            "Your symptoms look urgent. The doctor has been alerted and will see you first. "
-            "If this is life-threatening, call an ambulance now."
-        )
+        st.error(t("emergency_alert"))
     elif flags["level"] == "urgent":
-        st.warning(f"Urgent symptoms flagged (matched: **{flags['matched']}**). You will be seen sooner.")
+        st.warning(t("urgent_alert", kw=flags["matched"]))
 
     today = datetime.now()
     slots = generate_slots(today.date())
     taken = get_taken_slots(doctor["id"])
     available = [s for s in slots if s not in taken]
     if today.hour >= 17:
-        st.caption("Clinic hours are 9 AM–5 PM. Today's board is still open for this prototype demo.")
+        st.caption(t("after_hours"))
 
     if not available:
-        st.info("No open slots left for this doctor today. Try another doctor.")
-        st.caption(DISCLAIMER)
+        st.info(t("no_open_slots"))
+        st.caption(t("disclaimer"))
         return
 
     delay = get_emergency_delay(doctor["id"])
@@ -146,40 +181,52 @@ def _render_book_tab(doctors):
     least_wait = min(r["wait"] for r in rows)
     least_slots = {r["slot"] for r in rows if r["wait"] == least_wait}
 
-    st.markdown("**Available slots** (predicted wait includes any emergency delay)")
+    st.markdown(t("available_slots"))
     options = []
     lookup = {}
     for r in rows:
-        tag = "  ·  Least crowded" if r["slot"] in least_slots else ""
-        label = f"{r['display']}  —  ~{r['wait']} min wait{tag}"
+        tag = t("least_crowded") if r["slot"] in least_slots else ""
+        label = t(
+            "slot_option",
+            time=r["display"],
+            wait=r["wait"],
+            min_unit=t("min_unit"),
+            tag=tag,
+        )
         options.append(label)
         lookup[label] = r
 
-    chosen = st.selectbox("Pick a time", options, key="book_slot")
+    chosen = st.selectbox(t("pick_time"), options, key="book_slot")
     chosen_row = lookup[chosen]
     naive = chosen_row["ahead"] * doctor["avg_consult_min"]
     st.caption(
-        f"{chosen_row['ahead']} patients ahead x {doctor['avg_consult_min']} min average "
-        f"= about {naive} min. Displayed wait: **{chosen_row['wait']} min**."
+        t(
+            "slot_wait_formula",
+            n=chosen_row["ahead"],
+            avg=doctor["avg_consult_min"],
+            naive=naive,
+            wait=chosen_row["wait"],
+            min_unit=t("min_unit"),
+        )
     )
 
-    if st.button("Book appointment", type="primary", key="book_submit"):
+    if st.button(t("book_button"), type="primary", key="book_submit"):
         if not (name or "").strip():
-            st.error("Please enter your name.")
+            st.error(t("enter_name"))
             return
         if not (age_text or "").strip():
-            st.error("Please enter your age.")
+            st.error(t("enter_age"))
             return
         if not (symptoms or "").strip():
-            st.error("Please describe your symptoms (even a short note is fine).")
+            st.error(t("enter_symptoms"))
             return
         try:
             age = int(age_text)
         except ValueError:
-            st.error("Age must be a whole number.")
+            st.error(t("age_whole"))
             return
         if age < 0 or age > 120:
-            st.error("Please enter a realistic age (0–120).")
+            st.error(t("age_range", min_age=0, max_age=120))
             return
         try:
             appointment_id = book_slot(
@@ -190,80 +237,102 @@ def _render_book_tab(doctors):
                 symptoms=symptoms,
             )
         except ValueError as exc:
-            st.error(str(exc))
+            error_keys = {
+                "Patient name is required.": "booking_name_required",
+                "A valid age is required.": "booking_age_required",
+                "A time slot is required.": "booking_slot_required",
+                "That slot is already booked. Please pick another.": "slot_taken",
+            }
+            error_key = error_keys.get(str(exc))
+            if error_key is None:
+                raise
+            st.error(t(error_key))
             return
 
         st.session_state["tracked_appointment_id"] = str(appointment_id)
         result = triage(symptoms)
         st.success(
-            f"Booked. Your appointment ID is **{appointment_id}**. "
-            f"Please save this ID — you will need it on the My Appointment tab. "
-            f"{doctor['name']} at **{chosen_row['display']}**, "
-            f"estimated wait **{chosen_row['wait']} min**."
+            t(
+                "booking_confirmation",
+                id=appointment_id,
+                doctor=doctor["name"],
+                time=chosen_row["display"],
+                wait=chosen_row["wait"],
+                min_unit=t("min_unit"),
+            )
         )
         if result["level"] == "emergency":
-            st.error(
-                "Your symptoms look urgent. The doctor has been alerted and will see you first. "
-                "If this is life-threatening, call an ambulance now."
-            )
+            st.error(t("emergency_alert"))
 
-    st.caption(DISCLAIMER)
+    st.caption(t("disclaimer"))
 
 
 def _render_my_appointment_tab():
-    st.subheader("My appointment")
-    st.caption("Enter your appointment ID. This tab refreshes every 5 seconds.")
+    st.subheader(t("appointment_heading"))
+    st.caption(t("appointment_caption"))
 
     if "tracked_appointment_id" not in st.session_state:
         st.session_state.tracked_appointment_id = ""
 
     # Keep the typed ID across auto-refresh by binding the widget to session_state.
-    st.text_input("Appointment ID", key="tracked_appointment_id")
+    st.text_input(t("appointment_id"), key="tracked_appointment_id")
     raw_id = (st.session_state.tracked_appointment_id or "").strip()
 
     if raw_id:
         st_autorefresh(interval=5000, key="my_appt_refresh")
 
     if not raw_id:
-        st.info("Type the appointment ID from your booking confirmation.")
+        st.info(t("appointment_id_info"))
         return
 
     try:
         int(raw_id)
     except ValueError:
-        st.error("Appointment ID must be a number.")
+        st.error(t("appointment_id_number"))
         return
 
     status = get_appointment_status(raw_id)
     if status["status"] == "not_found":
-        st.error("No appointment found for that ID.")
+        st.error(t("appointment_not_found"))
         return
 
     if status["status"] == "cancelled":
-        st.warning("This appointment was cancelled.")
+        st.warning(t("appointment_cancelled"))
         return
     if status["status"] == "seen":
-        st.success("This visit is complete. Thank you.")
+        st.success(t("appointment_seen"))
         return
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Position in queue", status["position"] or "—")
-    c2.metric("Base wait", f"{status['base_wait']} min")
-    c3.metric("Emergency delay", f"{status['delay']} min")
-    c4.metric("Total wait", f"{status['total_wait']} min")
+    c1.metric(t("metric_position"), status["position"] or "—")
+    c2.metric(t("metric_base_wait"), f"{status['base_wait']} {t('min_unit')}")
+    c3.metric(t("metric_emergency_delay"), f"{status['delay']} {t('min_unit')}")
+    c4.metric(t("metric_total_wait"), f"{status['total_wait']} {t('min_unit')}")
+
+    triage_key = {
+        "emergency": "triage_emergency",
+        "urgent": "triage_urgent",
+        "routine": "triage_routine",
+    }[status["triage_level"]]
 
     st.caption(
-        f"Triage: **{status['triage_level']}** · "
-        f"Emergency ahead: {'yes' if status['emergency_active'] else 'no'}"
+        t(
+            "triage_status",
+            level=t(triage_key),
+            emergency_ahead=t("yes" if status["emergency_active"] else "no"),
+        )
     )
 
     if status["delay"] > 0:
         st.warning(
-            f"An emergency case was prioritized. Your wait increased by "
-            f"{status['delay']} min. Thank you for your patience."
+            t(
+                "appointment_delay_warning",
+                delay=status["delay"],
+                min_unit=t("min_unit"),
+            )
         )
 
-    if st.button("Cancel Appointment", key="cancel_appt"):
+    if st.button(t("cancel_button"), key="cancel_appt"):
         cancel_booking(raw_id)
-        st.success("Appointment cancelled.")
+        st.success(t("appointment_cancelled_success"))
         st.rerun()
